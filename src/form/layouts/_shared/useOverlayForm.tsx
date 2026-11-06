@@ -59,7 +59,7 @@ export type UseOverlayFormResult<T> = {
   /** 关闭时重置表单，仅在 destroyOnHidden=true 时有效 */
   resetFields: () => void;
   /** form 实例挂载完成回调（传给 BaseForm onInit 中调用），用于缓冲首次 onOpenChange */
-  onFormMount: () => void;
+  onFormMount: (form?: ProFormInstance) => void;
 };
 
 /**
@@ -126,8 +126,18 @@ export function useOverlayForm<T = Record<string, any>>({
     onOpenChange?.(nextOpen);
   });
 
+  /**
+   * 本次挂载实际绑定的表单实例。
+   * destroyOnHidden 下关闭动画结束时内容已经卸载，BaseForm 的
+   * useImperativeHandle 会把 formRef.current 置为 null；同时受控父组件可能在
+   * open 变 false 的同一次更新里换掉 form prop，此时最新 props 指向的是下一次
+   * 打开才会用的实例。记录挂载时的实例，才能清理“这一次”绑定的表单（#9789）。
+   */
+  const mountedFormRef = useRef<ProFormInstance | undefined>(undefined);
+
   /** form 挂载完成（由 ModalForm/DrawerForm 的 BaseForm onInit 调用） */
-  const onFormMount = useRefFunction(() => {
+  const onFormMount = useRefFunction((form?: ProFormInstance) => {
+    if (form) mountedFormRef.current = form;
     formMountedRef.current = true;
     const pending = pendingOpenRef.current;
     pendingOpenRef.current = null;
@@ -170,8 +180,11 @@ export function useOverlayForm<T = Record<string, any>>({
 
   // 重置表单（仅在 destroyOnHidden 时调用）
   const resetFields = useRefFunction(() => {
-    const form = formRef.current;
-    if (form && destroyOnHidden && typeof form.resetFields === 'function') {
+    if (!destroyOnHidden) return;
+    // 只清理本次挂载绑定的实例：关闭时 formRef 已被置空，而 props 里的
+    // form 可能已经换成了下一次打开要用的实例（#9789）。
+    const form = mountedFormRef.current;
+    if (form && typeof form.resetFields === 'function') {
       form.resetFields();
     }
   });
